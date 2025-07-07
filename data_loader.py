@@ -1,5 +1,7 @@
 import numpy as np
 import tensorflow as tf
+from matplotlib import pyplot as plt
+from tensorflow.keras import layers, models
 import os
 
 BATCH_SIZE = 64
@@ -39,7 +41,8 @@ class NumpyWrapper:
     def tf_load_npy(self, file_path, label):
         # wrap the numpy loader using tf.py_function so TensorFlow can call it
         spectrogram = tf.py_function(func=self.load_npy, inp=[file_path], Tout=tf.float32)
-        spectrogram.set_shape([64, None])
+        spectrogram.set_shape([64, 313])
+        spectrogram = tf.expand_dims(spectrogram, axis=-1)  # shape: (64, 313, 1)
         return spectrogram, label
 
 class DatasetCreation:
@@ -48,8 +51,10 @@ class DatasetCreation:
 
     def create_dataset(self, files, labels):
         ds = tf.data.Dataset.from_tensor_slices((files, labels))
-        ds = ds.map(self.wrapper.tf_load_npy)
-        ds = ds.shuffle(SHUFFLE_BUFFER_SIZE).batch(BATCH_SIZE)
+        # load and preprocess multiple samples in parallel
+        ds = ds.map(self.wrapper.tf_load_npy, num_parallel_calls=tf.data.AUTOTUNE)
+        # start loading the next batch while the model is still training on the current one => makes training faster
+        ds = ds.shuffle(SHUFFLE_BUFFER_SIZE).batch(BATCH_SIZE).prefetch(tf.data.AUTOTUNE)
         return ds
 
 class DatasetSplitter:
@@ -73,6 +78,41 @@ class DatasetSplitter:
 
         print(self.train_paths)
         print(self.train_labels)  # [1 1 1 ... 0 0 0]
+
+# TODO: solve underfitting problem
+class CNNBuilder:
+    def build_cnn(self):
+        model = models.Sequential()
+        model.add(layers.Input(shape=(64, 313, 1))) # only one channel: amplitude in db
+
+        # conv layer 1
+        model.add(layers.Conv2D(32, kernel_size=(3, 3), activation="relu"))
+        model.add(layers.MaxPooling2D(pool_size=(2, 2)))
+
+        # conv layer 2
+        model.add(layers.Conv2D(64, kernel_size=(3, 3), activation="relu"))
+        model.add(layers.MaxPooling2D(pool_size=(2, 2)))
+
+        # .flatten would lead to more parameters, so .globAvgPooling would be better
+        model.add(layers.GlobalAveragePooling2D())
+        model.add(layers.Dense(64, activation="relu"))
+        model.add(layers.Dropout(0.2))
+
+        model.add(layers.Dense(1, activation="sigmoid"))
+
+        model.compile(loss="binary_crossentropy", optimizer="adam", metrics=["accuracy"])
+        return model
+
+class GraphBuilder:
+    @staticmethod
+    def build_graph(history):
+        plt.plot(history.history["accuracy"], label="Train Acc")
+        plt.plot(history.history["val_accuracy"], label="Val Acc")
+        plt.xlabel("Epoch")
+        plt.ylabel("Accuracy")
+        plt.legend()
+        plt.grid(True)
+        plt.show()
 
 if __name__ == "__main__":
     save_dir = "D:/apneaSpectrograms"
@@ -119,6 +159,19 @@ if __name__ == "__main__":
     print(non_apnea_idx) # first non-apnea idx: 305
     print("Label:", label.numpy())  # 0
     print("Shape:", spectrogram.shape) # Shape: (64, 313)  => one spectrogram
+
+    cnn_builder = CNNBuilder()
+    cnn_model = cnn_builder.build_cnn()
+    cnn_model.summary()
+
+    # train model
+    history = cnn_model.fit(train_ds, validation_data=val_ds, epochs=10)
+    loss, acc = cnn_model.evaluate(test_ds)
+    print(f"Test accuracy: {acc:.4f}")
+
+    # build a graph
+    graph = GraphBuilder.build_graph(history)
+
 
 
 

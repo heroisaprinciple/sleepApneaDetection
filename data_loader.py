@@ -2,6 +2,7 @@ import numpy as np
 import tensorflow as tf
 from matplotlib import pyplot as plt
 from tensorflow.keras import layers, models
+from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay
 import os
 
 BATCH_SIZE = 64
@@ -93,6 +94,10 @@ class CNNBuilder:
         model.add(layers.Conv2D(64, kernel_size=(3, 3), activation="relu"))
         model.add(layers.MaxPooling2D(pool_size=(2, 2)))
 
+        # cov layer 3
+        model.add(layers.Conv2D(128, kernel_size=(3, 3), activation="relu"))
+        model.add(layers.MaxPooling2D(pool_size=(2, 2)))
+
         # .flatten would lead to more parameters, so .globAvgPooling would be better
         model.add(layers.GlobalAveragePooling2D())
         model.add(layers.Dense(64, activation="relu"))
@@ -105,13 +110,34 @@ class CNNBuilder:
 
 class GraphBuilder:
     @staticmethod
-    def build_graph(history):
+    def build_accuracy_graph(history):
         plt.plot(history.history["accuracy"], label="Train Acc")
         plt.plot(history.history["val_accuracy"], label="Val Acc")
         plt.xlabel("Epoch")
         plt.ylabel("Accuracy")
         plt.legend()
         plt.grid(True)
+        plt.show()
+
+class ConfusionMatrix:
+    @staticmethod
+    def build_confusion_matrix(test_ds, cnn_model):
+        y_true = []
+        y_pred = []
+        for x_batch, y_batch in test_ds:
+            # x_batch is a spectrogram batch -> shape: (64, 64, 313, 1)
+            # y_batch is a batch of true labels -> shape: (64,)
+            preds = cnn_model.predict(x_batch) # returns a numpy arr of apnea probabilities
+
+            # convert probabilities to class labels (0 or 1); if prob < 0.5 => False (0)
+            preds = (preds > 0.5).astype(int).flatten() # flatten because conf matrix expects 1D vectors
+
+            y_true.extend(y_batch.numpy().astype(int).flatten()) # a numpy arr of ground truth values
+            y_pred.extend(preds) # preds is already a numpy arr
+
+        cm = confusion_matrix(y_true, y_pred)
+        disp = ConfusionMatrixDisplay(confusion_matrix=cm)
+        disp.plot()
         plt.show()
 
 if __name__ == "__main__":
@@ -170,7 +196,10 @@ if __name__ == "__main__":
     print(f"Test accuracy: {acc:.4f}")
 
     # build a graph
-    graph = GraphBuilder.build_graph(history)
+    graph = GraphBuilder.build_accuracy_graph(history)
+
+    # conf matrix
+    confusion_matrix = ConfusionMatrix.build_confusion_matrix(test_ds, cnn_model)
 
 
 

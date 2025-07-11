@@ -3,7 +3,10 @@ import tensorflow as tf
 from matplotlib import pyplot as plt
 from tensorflow.keras import layers, models
 from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay
+from sklearn.utils.class_weight import compute_class_weight
+from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint
 import os
+import random
 
 BATCH_SIZE = 64
 SHUFFLE_BUFFER_SIZE = 1000
@@ -37,6 +40,10 @@ class NumpyWrapper:
     # so a wrapper is used here to load them via numpy inside tensorflow
     def load_npy(self, file_path):
         spectrogram = np.load(file_path.numpy())
+        # add normalization
+        min_val = np.min(spectrogram)
+        max_val = np.max(spectrogram)
+        spectrogram = (spectrogram - min_val) / (max_val - min_val + 1e-8)
         return spectrogram.astype(np.float32)
 
     def tf_load_npy(self, file_path, label):
@@ -140,8 +147,32 @@ class ConfusionMatrix:
         disp.plot()
         plt.show()
 
+class ClassWeights:
+    @staticmethod
+    def find_class_weights(splitter):
+        train_labels = splitter.train_labels
+        weights = compute_class_weight("balanced", classes=np.unique(train_labels), y=train_labels)
+        class_weights_dict = {i: weights[i] for i in range(len(weights))}
+        print("Class weights:", class_weights_dict)
+        return class_weights_dict
+
+class EarlyStop:
+    @staticmethod
+    def add_early_stop(metrics, patience):
+        return EarlyStopping(monitor=metrics, patience=patience, restore_best_weights=True)
+
+class ModelCheckpointer:
+    @staticmethod
+    def get_model_checkpoint(path, metrics):
+        return ModelCheckpoint(path, monitor=metrics, save_best_only=True, save_weights_only=False)
+
 if __name__ == "__main__":
+    random.seed(42)
+    np.random.seed(42)
+    tf.random.set_seed(42)
+
     save_dir = "D:/apneaSpectrograms"
+    best_model_path = "models/best_model.keras"
 
     splitter = DatasetSplitter(save_dir)
     wrapper = NumpyWrapper()
@@ -157,6 +188,10 @@ if __name__ == "__main__":
     train_ds = ds_creator.create_dataset(train_paths, train_labels)
     val_ds = ds_creator.create_dataset(val_paths, val_labels)
     test_ds = ds_creator.create_dataset(test_paths, test_labels)
+
+    print("Train label counts:", np.bincount(splitter.train_labels))
+    print("Val label counts:", np.bincount(splitter.val_labels))
+    print("Test label counts:", np.bincount(splitter.test_labels))
 
     for spec, lab in train_ds.take(1):
         print("Train Batch spectrograms shape:", spec.shape) # (64, 64, 313) => a full batch of 64 spectrograms
@@ -190,20 +225,25 @@ if __name__ == "__main__":
     cnn_model = cnn_builder.build_cnn()
     cnn_model.summary()
 
+    class_weights = ClassWeights.find_class_weights(splitter)
+
+    # do early stop after 10 epochs if validation loss is not decreasing
+    early_stop = EarlyStop.add_early_stop(metrics='val_loss', patience=10)
+
+    # add model checkpoint
+    model_checkpoint = ModelCheckpointer.get_model_checkpoint(path=best_model_path, metrics='val_loss')
+
     # train model
-    history = cnn_model.fit(train_ds, validation_data=val_ds, epochs=10)
+    history = cnn_model.fit(train_ds, validation_data=val_ds, epochs=20, class_weight=class_weights,
+                            callbacks=[early_stop])
+
     loss, acc = cnn_model.evaluate(test_ds)
     print(f"Test accuracy: {acc:.4f}")
+
+    print("Stopped at epoch:", len(history.history['loss']))
 
     # build a graph
     graph = GraphBuilder.build_accuracy_graph(history)
 
     # conf matrix
     confusion_matrix = ConfusionMatrix.build_confusion_matrix(test_ds, cnn_model)
-
-
-
-
-
-
-

@@ -1,8 +1,10 @@
 import numpy as np
+import sklearn
 import tensorflow as tf
 from matplotlib import pyplot as plt
 from tensorflow.keras import layers, models
-from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay
+from sklearn.metrics import (confusion_matrix, ConfusionMatrixDisplay, classification_report, roc_auc_score, roc_curve,
+                             f1_score, precision_score, recall_score)
 from sklearn.utils.class_weight import compute_class_weight
 from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint
 import os
@@ -87,7 +89,6 @@ class DatasetSplitter:
         print(self.train_paths)
         print(self.train_labels)  # [1 1 1 ... 0 0 0]
 
-# TODO: solve underfitting problem
 class CNNBuilder:
     def build_cnn(self):
         model = models.Sequential()
@@ -131,6 +132,7 @@ class ConfusionMatrix:
     def build_confusion_matrix(test_ds, cnn_model):
         y_true = []
         y_pred = []
+        y_pred_probs = [] # for roc auc curve
         for x_batch, y_batch in test_ds:
             # x_batch is a spectrogram batch -> shape: (64, 64, 313, 1)
             # y_batch is a batch of true labels -> shape: (64,)
@@ -141,10 +143,47 @@ class ConfusionMatrix:
 
             y_true.extend(y_batch.numpy().astype(int).flatten()) # a numpy arr of ground truth values
             y_pred.extend(preds) # preds is already a numpy arr
+            y_pred_probs.extend(preds)
 
         cm = confusion_matrix(y_true, y_pred)
         disp = ConfusionMatrixDisplay(confusion_matrix=cm)
         disp.plot()
+        plt.show()
+        return np.array(y_true), np.array(y_pred), np.array(y_pred_probs)
+
+    @staticmethod
+    def add_metrics(y_true, y_pred):
+        # there is no accuracy here as it is the same as the test accuracy printed in __main__
+        cm = confusion_matrix(y_true, y_pred)
+        tn, fp, fn, tp = cm.ravel()
+        sensitivity = tp / (tp + fn) if tp + fn > 0 else 0
+        specificity = tn / (tn + fp) if tn + fp > 0 else 0
+        precision = tp / (tp + fp) if tp + fp > 0 else 0
+        f1 = f1_score(y_true, y_pred)
+
+        print("Sensitivity:", sensitivity)
+        print("Specificity:", specificity)
+        print("Precision:", precision)
+        print("F1:", f1)
+
+        print("Classification Report:")
+        print(classification_report(y_true, y_pred))
+
+    @staticmethod
+    def add_roc_auc_curve(y_true, y_pred):
+        # false positive rate, true positive rate and threshold
+        fpr, tpr, thresholds = roc_curve(y_true, y_pred)
+        roc_auc = roc_auc_score(y_true, y_pred)
+        print("ROC AUC:", roc_auc)
+
+        plt.figure(figsize=(6, 4))
+        plt.plot(fpr, tpr, color='red', lw=2, label=f'AUC = {roc_auc}')
+        plt.plot([0, 1], [0, 1], color='navy', lw=2, linestyle='--', label='Random')
+        plt.xlabel('False Positive Rate (Specificity)')
+        plt.ylabel('True Positive Rate (Sensitivity)')
+        plt.title('ROC Curve')
+        plt.legend(loc="lower right")
+        plt.grid(True)
         plt.show()
 
 class ClassWeights:
@@ -245,5 +284,8 @@ if __name__ == "__main__":
     # build a graph
     graph = GraphBuilder.build_accuracy_graph(history)
 
-    # conf matrix
-    confusion_matrix = ConfusionMatrix.build_confusion_matrix(test_ds, cnn_model)
+    # conf matrix and metrics
+    y_true, y_pred, y_pred_probs = ConfusionMatrix.build_confusion_matrix(test_ds, cnn_model)
+    ConfusionMatrix.add_metrics(y_true=y_true, y_pred=y_pred)
+    ConfusionMatrix.add_roc_auc_curve(y_true=y_true, y_pred=y_pred)
+

@@ -40,10 +40,10 @@ class NumpyWrapper:
     # so a wrapper is used here to load them via numpy inside tensorflow
     def load_npy(self, file_path):
         spectrogram = np.load(file_path.numpy())
-        # add normalization
-        min_val = np.min(spectrogram)
-        max_val = np.max(spectrogram)
-        spectrogram = (spectrogram - min_val) / (max_val - min_val + 1e-8)
+        # add standardization
+        mean = np.mean(spectrogram)
+        std = np.std(spectrogram)
+        spectrogram = (spectrogram - mean) / (std + 1e-8)
         return spectrogram.astype(np.float32)
 
     def tf_load_npy(self, file_path, label):
@@ -235,7 +235,7 @@ if __name__ == "__main__":
 
     # train model
     history = cnn_model.fit(train_ds, validation_data=val_ds, epochs=20, class_weight=class_weights,
-                            callbacks=[early_stop])
+                            callbacks=[early_stop, model_checkpoint])
 
     loss, acc = cnn_model.evaluate(test_ds)
     print(f"Test accuracy: {acc:.4f}")

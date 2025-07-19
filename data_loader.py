@@ -12,6 +12,7 @@ import random
 
 BATCH_SIZE = 64
 SHUFFLE_BUFFER_SIZE = 1000
+SEED = 42
 
 class DataLabel:
     def __init__(self, dir, patients_list):
@@ -38,6 +39,9 @@ class DataLabel:
         return np.array(self.paths), np.array(self.labels)
 
 class NumpyWrapper:
+    def __init__(self, training = True):
+        self.training = training
+
     # tensorflow does not natively support .npy files
     # so a wrapper is used here to load them via numpy inside tensorflow
     def load_npy(self, file_path):
@@ -46,6 +50,10 @@ class NumpyWrapper:
         mean = np.mean(spectrogram)
         std = np.std(spectrogram)
         spectrogram = (spectrogram - mean) / (std + 1e-8)
+
+        # augment only while training
+        if self.training:
+            spectrogram = self.spec_augment(spectrogram)
         return spectrogram.astype(np.float32)
 
     def tf_load_npy(self, file_path, label):
@@ -54,6 +62,22 @@ class NumpyWrapper:
         spectrogram.set_shape([64, 313])
         spectrogram = tf.expand_dims(spectrogram, axis=-1)  # shape: (64, 313, 1)
         return spectrogram, label
+
+    # data augmentation - mask or zero out a random block of time steps
+    # choose a random point and zero out n time steps columns -> x axis
+    # TODO: try masking for 50% of samples
+    def spec_augment(self, spectrogram, time_masking_max=10, freq_masking_max=3):
+        # time masking
+        t = spectrogram.shape[1] # 313 time steps
+        t0 = np.random.randint(0, t - time_masking_max)
+        spectrogram[:, t0:t0 + time_masking_max] = 0.0 # set n columns to 0
+
+        # frequency bins masking
+        # same concept - choose a random point and zero out n frequency bins -> y axis
+        f = spectrogram.shape[0] # 64
+        f0 = np.random.randint(0, f - freq_masking_max)
+        spectrogram[f0:f0 + freq_masking_max, :] = 0.0 # set n rows to 0
+        return spectrogram
 
 class DatasetCreation:
     def __init__(self, wrapper):
@@ -64,6 +88,7 @@ class DatasetCreation:
         # load and preprocess multiple samples in parallel
         ds = ds.map(self.wrapper.tf_load_npy, num_parallel_calls=tf.data.AUTOTUNE)
         # start loading the next batch while the model is still training on the current one => makes training faster
+        # TODO: see if seed is good here
         ds = ds.shuffle(SHUFFLE_BUFFER_SIZE).batch(BATCH_SIZE).prefetch(tf.data.AUTOTUNE)
         return ds
 
@@ -123,6 +148,16 @@ class GraphBuilder:
         plt.plot(history.history["val_accuracy"], label="Val Acc")
         plt.xlabel("Epoch")
         plt.ylabel("Accuracy")
+        plt.legend()
+        plt.grid(True)
+        plt.show()
+
+    @staticmethod
+    def build_loss_graph(history):
+        plt.plot(history.history["loss"], label="Train Loss")
+        plt.plot(history.history["val_loss"], label="Val Loss")
+        plt.xlabel("Epoch")
+        plt.ylabel("Loss")
         plt.legend()
         plt.grid(True)
         plt.show()
@@ -206,16 +241,19 @@ class ModelCheckpointer:
         return ModelCheckpoint(path, monitor=metrics, save_best_only=True, save_weights_only=False)
 
 if __name__ == "__main__":
-    random.seed(42)
-    np.random.seed(42)
-    tf.random.set_seed(42)
+    random.seed(SEED)
+    np.random.seed(SEED)
+    tf.random.set_seed(SEED)
 
     save_dir = "D:/apneaSpectrograms"
     best_model_path = "models/best_model.keras"
 
     splitter = DatasetSplitter(save_dir)
-    wrapper = NumpyWrapper()
-    ds_creator = DatasetCreation(wrapper)
+    train_wrapper = NumpyWrapper(training=True)
+    eval_wrapper = NumpyWrapper(training=False)
+
+    ds_creator_train = DatasetCreation(train_wrapper)
+    ds_creator_eval = DatasetCreation(eval_wrapper)
 
     train_paths = tf.constant(splitter.train_paths) # creates a paths tensor (tf.Tensor([b'[path]/seg_000.npy')
     train_labels = tf.constant(splitter.train_labels) # creates a labels tensor (tf.Tensor([1 1 1 ... 0 0 0])
@@ -224,9 +262,9 @@ if __name__ == "__main__":
     test_paths = tf.constant(splitter.test_paths)
     test_labels = tf.constant(splitter.test_labels)
 
-    train_ds = ds_creator.create_dataset(train_paths, train_labels)
-    val_ds = ds_creator.create_dataset(val_paths, val_labels)
-    test_ds = ds_creator.create_dataset(test_paths, test_labels)
+    train_ds = ds_creator_train.create_dataset(train_paths, train_labels)
+    val_ds = ds_creator_eval.create_dataset(val_paths, val_labels)
+    test_ds = ds_creator_eval.create_dataset(test_paths, test_labels)
 
     print("Train label counts:", np.bincount(splitter.train_labels))
     print("Val label counts:", np.bincount(splitter.val_labels))
@@ -245,8 +283,8 @@ if __name__ == "__main__":
         print("Test Batch labels:", lab.numpy()) # [0...1]
 
     # load one sample from the first file
-    spectrogram, label = wrapper.tf_load_npy(train_paths[0], train_labels[0])
-    print("Shape:", spectrogram.shape)
+    spectrogram, label = train_wrapper.tf_load_npy(train_paths[0], train_labels[0])
+    print("Shape after training and augmentation:", spectrogram.shape)
     print("Ten seconds:", spectrogram[:, :313])
 
     # non-apnea
@@ -255,10 +293,11 @@ if __name__ == "__main__":
     path = tf.constant(splitter.train_paths[non_apnea_idx])
     label = tf.constant(splitter.train_labels[non_apnea_idx])
 
-    spectrogram, label = wrapper.tf_load_npy(path, label)
-    print(non_apnea_idx) # first non-apnea idx: 305
+    # training
+    spectrogram, label = train_wrapper.tf_load_npy(path, label)
+    print(non_apnea_idx)  # first non-apnea idx: 305
     print("Label:", label.numpy())  # 0
-    print("Shape:", spectrogram.shape) # Shape: (64, 313)  => one spectrogram
+    print("Shape after training and augmentation:", spectrogram.shape)  # Shape: (64, 313)  => one spectrogram
 
     cnn_builder = CNNBuilder()
     cnn_model = cnn_builder.build_cnn()
@@ -266,8 +305,8 @@ if __name__ == "__main__":
 
     class_weights = ClassWeights.find_class_weights(splitter)
 
-    # do early stop after 10 epochs if validation loss is not decreasing
-    early_stop = EarlyStop.add_early_stop(metrics='val_loss', patience=10)
+    # do early stop after 15 epochs if validation loss is not decreasing
+    early_stop = EarlyStop.add_early_stop(metrics='val_loss', patience=15)
 
     # add model checkpoint
     model_checkpoint = ModelCheckpointer.get_model_checkpoint(path=best_model_path, metrics='val_loss')
@@ -282,10 +321,10 @@ if __name__ == "__main__":
     print("Stopped at epoch:", len(history.history['loss']))
 
     # build a graph
-    graph = GraphBuilder.build_accuracy_graph(history)
+    GraphBuilder.build_accuracy_graph(history)
+    GraphBuilder.build_loss_graph(history)
 
     # conf matrix and metrics
     y_true, y_pred, y_pred_probs = ConfusionMatrix.build_confusion_matrix(test_ds, cnn_model)
     ConfusionMatrix.add_metrics(y_true=y_true, y_pred=y_pred)
-    ConfusionMatrix.add_roc_auc_curve(y_true=y_true, y_pred=y_pred)
-
+    ConfusionMatrix.add_roc_auc_curve(y_true=y_true, y_pred=y_pred_probs)

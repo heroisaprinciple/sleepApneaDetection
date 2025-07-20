@@ -52,7 +52,7 @@ class NumpyWrapper:
         spectrogram = (spectrogram - mean) / (std + 1e-8)
 
         # augment only while training
-        if self.training:
+        if self.training and np.random.rand() < 0.5: # augment for 50% of samples
             spectrogram = self.spec_augment(spectrogram)
         return spectrogram.astype(np.float32)
 
@@ -65,7 +65,6 @@ class NumpyWrapper:
 
     # data augmentation - mask or zero out a random block of time steps
     # choose a random point and zero out n time steps columns -> x axis
-    # TODO: try masking for 50% of samples
     def spec_augment(self, spectrogram, time_masking_max=10, freq_masking_max=3):
         # time masking
         t = spectrogram.shape[1] # 313 time steps

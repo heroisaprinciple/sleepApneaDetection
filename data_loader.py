@@ -7,7 +7,7 @@ from sklearn.metrics import (confusion_matrix, ConfusionMatrixDisplay, classific
                              f1_score, precision_score, recall_score)
 from sklearn.utils.class_weight import compute_class_weight
 from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint
-from tensorflow.keras.optimizers import Adam, RMSprop, SGD
+from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.regularizers import L2
 import os
 import random
@@ -55,7 +55,7 @@ class NumpyWrapper:
         spectrogram = (spectrogram - mean) / (std + 1e-8)
 
         # augment only while training
-        if self.training and np.random.rand() < 0.5: # augment for 50% of samples
+        if self.training and np.random.rand() < 0.3: # augment for 30% of samples
             spectrogram = self.spec_augment(spectrogram)
         return spectrogram.astype(np.float32)
 
@@ -123,17 +123,17 @@ class CNNBuilder:
         # conv layer 1
         model.add(layers.Conv2D(32, kernel_size=(3, 3), activation="relu"))
         model.add(layers.MaxPooling2D(pool_size=(2, 2)))
-        #model.add(layers.Dropout(0.3))
+        # model.add(layers.Dropout(0.3))
 
         # conv layer 2
         model.add(layers.Conv2D(64, kernel_size=(3, 3), activation="relu"))
         model.add(layers.MaxPooling2D(pool_size=(2, 2)))
-        #model.add(layers.Dropout(0.3))
+        # model.add(layers.Dropout(0.3))
 
         # cov layer 3
         model.add(layers.Conv2D(128, kernel_size=(3, 3), activation="relu"))
         model.add(layers.MaxPooling2D(pool_size=(2, 2)))
-        #model.add(layers.Dropout(0.3))
+        # model.add(layers.Dropout(0.3))
 
         # .flatten would lead to more parameters, so .globAvgPooling would be better
         model.add(layers.GlobalAveragePooling2D())
@@ -179,13 +179,14 @@ class ConfusionMatrix:
             # x_batch is a spectrogram batch -> shape: (64, 64, 313, 1)
             # y_batch is a batch of true labels -> shape: (64,)
             preds = cnn_model.predict(x_batch) # returns a numpy arr of apnea probabilities
+            prob_preds = preds.flatten()
 
             # convert probabilities to class labels (0 or 1); if prob < 0.5 => False (0)
-            preds = (preds > 0.5).astype(int).flatten() # flatten because conf matrix expects 1D vectors
+            bin_preds = (preds > 0.5).astype(int).flatten() # flatten because conf matrix expects 1D vectors
 
             y_true.extend(y_batch.numpy().astype(int).flatten()) # a numpy arr of ground truth values
-            y_pred.extend(preds) # preds is already a numpy arr
-            y_pred_probs.extend(preds)
+            y_pred.extend(bin_preds) # preds is already a numpy arr
+            y_pred_probs.extend(prob_preds) # add actual probabilities, not binary values
 
         cm = confusion_matrix(y_true, y_pred)
         disp = ConfusionMatrixDisplay(confusion_matrix=cm)

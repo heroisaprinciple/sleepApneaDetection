@@ -34,6 +34,9 @@ cd sleepApneaDetection
 ### 2. CUDA and cuDNN Installation
 For the guide, please refer [here](https://www.tensorflow.org/install/pip)
 
+### 3. Run all packages in the project
+````pip install -r requirements.txt````
+
 ---
 
 ## References

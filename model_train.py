@@ -123,17 +123,14 @@ class CNNBuilder:
         # conv layer 1
         model.add(layers.Conv2D(32, kernel_size=(3, 3), activation="relu"))
         model.add(layers.MaxPooling2D(pool_size=(2, 2)))
-        # model.add(layers.Dropout(0.3))
 
         # conv layer 2
         model.add(layers.Conv2D(64, kernel_size=(3, 3), activation="relu"))
         model.add(layers.MaxPooling2D(pool_size=(2, 2)))
-        # model.add(layers.Dropout(0.3))
 
         # cov layer 3
         model.add(layers.Conv2D(128, kernel_size=(3, 3), activation="relu"))
         model.add(layers.MaxPooling2D(pool_size=(2, 2)))
-        # model.add(layers.Dropout(0.3))
 
         # .flatten would lead to more parameters, so .globAvgPooling would be better
         model.add(layers.GlobalAveragePooling2D())
@@ -143,7 +140,6 @@ class CNNBuilder:
         model.add(layers.Dense(1, activation="sigmoid"))
 
         # learning rate is reduced from 0.001 to 0.0001 (to reduce bouncing val curves)
-        # TODO: try different optimizers but they won't work alone - SGD reduces bouncing, RMSprop otherwise
         model.compile(loss="binary_crossentropy", optimizer=Adam(learning_rate=0.0001),
                       metrics=["accuracy"])
         return model

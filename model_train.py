@@ -7,11 +7,15 @@ from sklearn.metrics import (confusion_matrix, ConfusionMatrixDisplay, classific
                              f1_score, precision_score, recall_score)
 from sklearn.utils.class_weight import compute_class_weight
 from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint
+from tensorflow.keras.optimizers import Adam
+from tensorflow.keras.regularizers import L2
 import os
 import random
 
 BATCH_SIZE = 64
 SHUFFLE_BUFFER_SIZE = 1000
+SEED = 42
+L2_REG = L2(l2=0.01)
 
 class DataLabel:
     def __init__(self, dir, patients_list):
@@ -38,6 +42,9 @@ class DataLabel:
         return np.array(self.paths), np.array(self.labels)
 
 class NumpyWrapper:
+    def __init__(self, training = True):
+        self.training = training
+
     # tensorflow does not natively support .npy files
     # so a wrapper is used here to load them via numpy inside tensorflow
     def load_npy(self, file_path):
@@ -46,6 +53,10 @@ class NumpyWrapper:
         mean = np.mean(spectrogram)
         std = np.std(spectrogram)
         spectrogram = (spectrogram - mean) / (std + 1e-8)
+
+        # augment only while training
+        if self.training and np.random.rand() < 0.3: # augment for 30% of samples
+            spectrogram = self.spec_augment(spectrogram)
         return spectrogram.astype(np.float32)
 
     def tf_load_npy(self, file_path, label):
@@ -54,6 +65,21 @@ class NumpyWrapper:
         spectrogram.set_shape([64, 313])
         spectrogram = tf.expand_dims(spectrogram, axis=-1)  # shape: (64, 313, 1)
         return spectrogram, label
+
+    # data augmentation - mask or zero out a random block of time steps
+    # choose a random point and zero out n time steps columns -> x axis
+    def spec_augment(self, spectrogram, time_masking_max=10, freq_masking_max=3):
+        # time masking
+        t = spectrogram.shape[1] # 313 time steps
+        t0 = np.random.randint(0, t - time_masking_max)
+        spectrogram[:, t0:t0 + time_masking_max] = 0.0 # set n columns to 0
+
+        # frequency bins masking
+        # same concept - choose a random point and zero out n frequency bins -> y axis
+        f = spectrogram.shape[0] # 64
+        f0 = np.random.randint(0, f - freq_masking_max)
+        spectrogram[f0:f0 + freq_masking_max, :] = 0.0 # set n rows to 0
+        return spectrogram
 
 class DatasetCreation:
     def __init__(self, wrapper):
@@ -108,12 +134,14 @@ class CNNBuilder:
 
         # .flatten would lead to more parameters, so .globAvgPooling would be better
         model.add(layers.GlobalAveragePooling2D())
-        model.add(layers.Dense(64, activation="relu"))
-        model.add(layers.Dropout(0.2))
+        model.add(layers.Dense(64, activation="relu", kernel_regularizer=L2_REG))
+        model.add(layers.Dropout(0.5))
 
         model.add(layers.Dense(1, activation="sigmoid"))
 
-        model.compile(loss="binary_crossentropy", optimizer="adam", metrics=["accuracy"])
+        # learning rate is reduced from 0.001 to 0.0001 (to reduce bouncing val curves)
+        model.compile(loss="binary_crossentropy", optimizer=Adam(learning_rate=0.0001),
+                      metrics=["accuracy"])
         return model
 
 class GraphBuilder:
@@ -123,6 +151,16 @@ class GraphBuilder:
         plt.plot(history.history["val_accuracy"], label="Val Acc")
         plt.xlabel("Epoch")
         plt.ylabel("Accuracy")
+        plt.legend()
+        plt.grid(True)
+        plt.show()
+
+    @staticmethod
+    def build_loss_graph(history):
+        plt.plot(history.history["loss"], label="Train Loss")
+        plt.plot(history.history["val_loss"], label="Val Loss")
+        plt.xlabel("Epoch")
+        plt.ylabel("Loss")
         plt.legend()
         plt.grid(True)
         plt.show()
@@ -137,13 +175,14 @@ class ConfusionMatrix:
             # x_batch is a spectrogram batch -> shape: (64, 64, 313, 1)
             # y_batch is a batch of true labels -> shape: (64,)
             preds = cnn_model.predict(x_batch) # returns a numpy arr of apnea probabilities
+            prob_preds = preds.flatten()
 
             # convert probabilities to class labels (0 or 1); if prob < 0.5 => False (0)
-            preds = (preds > 0.5).astype(int).flatten() # flatten because conf matrix expects 1D vectors
+            bin_preds = (preds > 0.5).astype(int).flatten() # flatten because conf matrix expects 1D vectors
 
             y_true.extend(y_batch.numpy().astype(int).flatten()) # a numpy arr of ground truth values
-            y_pred.extend(preds) # preds is already a numpy arr
-            y_pred_probs.extend(preds)
+            y_pred.extend(bin_preds) # preds is already a numpy arr
+            y_pred_probs.extend(prob_preds) # add actual probabilities, not binary values
 
         cm = confusion_matrix(y_true, y_pred)
         disp = ConfusionMatrixDisplay(confusion_matrix=cm)
@@ -206,16 +245,19 @@ class ModelCheckpointer:
         return ModelCheckpoint(path, monitor=metrics, save_best_only=True, save_weights_only=False)
 
 if __name__ == "__main__":
-    random.seed(42)
-    np.random.seed(42)
-    tf.random.set_seed(42)
+    random.seed(SEED)
+    np.random.seed(SEED)
+    tf.random.set_seed(SEED)
 
     save_dir = "D:/apneaSpectrograms"
     best_model_path = "models/best_model.keras"
 
     splitter = DatasetSplitter(save_dir)
-    wrapper = NumpyWrapper()
-    ds_creator = DatasetCreation(wrapper)
+    train_wrapper = NumpyWrapper(training=True)
+    eval_wrapper = NumpyWrapper(training=False)
+
+    ds_creator_train = DatasetCreation(train_wrapper)
+    ds_creator_eval = DatasetCreation(eval_wrapper)
 
     train_paths = tf.constant(splitter.train_paths) # creates a paths tensor (tf.Tensor([b'[path]/seg_000.npy')
     train_labels = tf.constant(splitter.train_labels) # creates a labels tensor (tf.Tensor([1 1 1 ... 0 0 0])
@@ -224,9 +266,9 @@ if __name__ == "__main__":
     test_paths = tf.constant(splitter.test_paths)
     test_labels = tf.constant(splitter.test_labels)
 
-    train_ds = ds_creator.create_dataset(train_paths, train_labels)
-    val_ds = ds_creator.create_dataset(val_paths, val_labels)
-    test_ds = ds_creator.create_dataset(test_paths, test_labels)
+    train_ds = ds_creator_train.create_dataset(train_paths, train_labels)
+    val_ds = ds_creator_eval.create_dataset(val_paths, val_labels)
+    test_ds = ds_creator_eval.create_dataset(test_paths, test_labels)
 
     print("Train label counts:", np.bincount(splitter.train_labels))
     print("Val label counts:", np.bincount(splitter.val_labels))
@@ -245,8 +287,8 @@ if __name__ == "__main__":
         print("Test Batch labels:", lab.numpy()) # [0...1]
 
     # load one sample from the first file
-    spectrogram, label = wrapper.tf_load_npy(train_paths[0], train_labels[0])
-    print("Shape:", spectrogram.shape)
+    spectrogram, label = train_wrapper.tf_load_npy(train_paths[0], train_labels[0])
+    print("Shape after training and augmentation:", spectrogram.shape)
     print("Ten seconds:", spectrogram[:, :313])
 
     # non-apnea
@@ -255,10 +297,11 @@ if __name__ == "__main__":
     path = tf.constant(splitter.train_paths[non_apnea_idx])
     label = tf.constant(splitter.train_labels[non_apnea_idx])
 
-    spectrogram, label = wrapper.tf_load_npy(path, label)
-    print(non_apnea_idx) # first non-apnea idx: 305
+    # training
+    spectrogram, label = train_wrapper.tf_load_npy(path, label)
+    print(non_apnea_idx)  # first non-apnea idx: 305
     print("Label:", label.numpy())  # 0
-    print("Shape:", spectrogram.shape) # Shape: (64, 313)  => one spectrogram
+    print("Shape after training and augmentation:", spectrogram.shape)  # Shape: (64, 313)  => one spectrogram
 
     cnn_builder = CNNBuilder()
     cnn_model = cnn_builder.build_cnn()
@@ -266,8 +309,8 @@ if __name__ == "__main__":
 
     class_weights = ClassWeights.find_class_weights(splitter)
 
-    # do early stop after 10 epochs if validation loss is not decreasing
-    early_stop = EarlyStop.add_early_stop(metrics='val_loss', patience=10)
+    # do early stop after 11 epochs if validation loss is not decreasing
+    early_stop = EarlyStop.add_early_stop(metrics='val_loss', patience=11)
 
     # add model checkpoint
     model_checkpoint = ModelCheckpointer.get_model_checkpoint(path=best_model_path, metrics='val_loss')
@@ -282,10 +325,10 @@ if __name__ == "__main__":
     print("Stopped at epoch:", len(history.history['loss']))
 
     # build a graph
-    graph = GraphBuilder.build_accuracy_graph(history)
+    GraphBuilder.build_accuracy_graph(history)
+    GraphBuilder.build_loss_graph(history)
 
     # conf matrix and metrics
     y_true, y_pred, y_pred_probs = ConfusionMatrix.build_confusion_matrix(test_ds, cnn_model)
     ConfusionMatrix.add_metrics(y_true=y_true, y_pred=y_pred)
-    ConfusionMatrix.add_roc_auc_curve(y_true=y_true, y_pred=y_pred)
-
+    ConfusionMatrix.add_roc_auc_curve(y_true=y_true, y_pred=y_pred_probs)

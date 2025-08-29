@@ -1,4 +1,4 @@
-or# Sleep Apnea Detection with Deep Learning (TensorFlow + GPU)
+Sleep Apnea Detection with Deep Learning (TensorFlow + GPU)
 
 This project uses a Convolutional Neural Network (CNN) model to detect sleep apnea events from audio spectrograms.  
 All training and inference are accelerated using an NVIDIA GPU (via TensorFlow) on Windows.
@@ -90,3 +90,4 @@ is much reliable for analysis.
 This project is licensed under the MIT License.  
 
 Please note that removing or altering the copyright notice is strictly prohibited and constitutes a violation of copyright law.
+

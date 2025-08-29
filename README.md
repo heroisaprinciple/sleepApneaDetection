@@ -1,4 +1,4 @@
-# Sleep Apnea Detection with Deep Learning (TensorFlow + GPU)
+or# Sleep Apnea Detection with Deep Learning (TensorFlow + GPU)
 
 This project uses a Convolutional Neural Network (CNN) model to detect sleep apnea events from audio spectrograms.  
 All training and inference are accelerated using an NVIDIA GPU (via TensorFlow) on Windows.
@@ -51,7 +51,7 @@ Go to the [separate repository](https://github.com/heroisaprinciple/apneaDetecti
 The README.md contains all the necessary instructions. Please, don't forget to create
 your own venv.
 
-### 8. Login to AWS as admin to view the uploaded recorded segment (S3 bucket is private for now)
+### 8. Login to AWS as admin to view the uploaded recorded segment (apnearecordings is private for now)
 In order to access it, your root account should transfer you the admin credentials.
 Those must be saved as env variables on OS and never exposed in code.
 All recordings will be saved under <i>apnearecordings/PATIENT_ID/YY/MM/DD/H/M/S</i> prefix.
@@ -59,9 +59,13 @@ The example:
 
 ![S3 Example](https://i.imgur.com/t0vFI7I.png)
 
+**If you want to play with cloud, you might want to create a separate bucket yourself.**
+Then, feel free to change the ````fetch_data.py```` file.
+
 ### 9. Fetch data
 Run ````fetch_data.py```` to retrieve segments. They will be stored in fetched_recordings/ dir. 
 It is not possible unless using admin credentials. 
+If you created your own bucket, no worries.
 
 ### 10. Analyze original and recorded segments
 Run ```extract_apnea_spectrograms.ipynb``` to create a spectrogram from a recorded segment.
@@ -84,4 +88,5 @@ is much reliable for analysis.
   The author: Bryan Darquea
 
 This project is licensed under the MIT License.  
+
 Please note that removing or altering the copyright notice is strictly prohibited and constitutes a violation of copyright law.

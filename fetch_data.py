@@ -6,12 +6,13 @@ from pathlib import Path
 # The credentials are properly secured.
 # Thus, exposing a bucket name and key patterns has no security risk.
 
-PATIENT_ID = "00001486-100507"
+PATIENT_ID = "00001463-100507"
 BUCKET = "apnearecordings"
-SEGMENT = "seg_000"
-KEY = f"{PATIENT_ID}/2025/08/21/15/20/04/recorded_raw.wav"
+SEGMENT = "seg_252"
+KEY = f"{PATIENT_ID}/2025/08/29/09/06/26/recorded_raw.wav"
 EVENT = "non_apnea" # could be apnea
 
+# saves to fetched_recordings
 out_path = Path("fetched_recordings") / PATIENT_ID / EVENT / SEGMENT / "recorded_segment_raw.wav"
 out_path.parent.mkdir(parents=True, exist_ok=True)
 

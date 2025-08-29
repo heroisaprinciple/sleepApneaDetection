@@ -37,9 +37,3 @@ if __name__ == "__main__":
     test_audio("original_spectrogram.npy", model)
     # test raw segment
     test_audio("recorded_spectrogram_raw.npy", model)
-    # test clean segment
-    test_audio("recorded_spectrogram_clean.npy", model)
-
-
-
-
